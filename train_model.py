@@ -17,7 +17,14 @@ def init_params(layers, activation_func):
     params = {}
     for i in range(1, len(layers)):
         # Initialize weights
-        W = np.random.rand(layers[i], layers [i - 1]) - 0.5  # Constrain the random value between -0.5 to 0.5
+        # W = np.random.rand(layers[i], layers [i - 1]) - 0.5  # Constrain the random value between -0.5 to 0.5
+        # params[f'W{i}'] = W
+
+        # Initialize weights
+        if i == 1:  # For the input layer (W1)
+            W = np.random.rand(layers[i], layers[i - 1] - 1) - 0.5  # Subtract 1 from the input dimension
+        else:  # For all other layers
+            W = np.random.rand(layers[i], layers[i - 1]) - 0.5
         params[f'W{i}'] = W
 
         # Initialize biases
@@ -106,7 +113,7 @@ def ReLU_deriv(Z):
     return Z > 0
         
 
-layer_sizes = [n-1, 100, 100, 10] # First layer has 784 neuron, second layer has 10 neuron, third layer has 10 neuron. First layer is the input layer, last layer is the output layer.
+layer_sizes = [n, 100, 100, 10] # First layer has 784 neuron, second layer has 10 neuron, third layer has 10 neuron. First layer is the input layer, last layer is the output layer.
 # gives n-1, so that it could match the size of the input feature
 
 activation_func = ['ReLu','ReLu','softmax']
@@ -116,3 +123,4 @@ num_layers = sum(1 for key in params.keys() if key.startswith('W'))  # Count wei
 
 
 print(params['W1'])
+
