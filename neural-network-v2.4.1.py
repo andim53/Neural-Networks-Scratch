@@ -1,192 +1,303 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue Oct 29 16:33:50 2024
-
-@author: andisyamsul
+Improved Neural Network Implementation for Auto-MPG Dataset
+Features:
+- Early stopping
+- Learning rate scheduling
+- Improved initialization
+- Better organization with classes
+- Type hints and documentation
+- Configuration management
+- Improved visualization
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Tuple, Dict
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Callable, Optional
+from pathlib import Path
 
-# Initialize parameters with Adam-specific parameters
-def init_params(layers: List[int], activation_funcs: List[str]) -> Dict[str, np.ndarray]:
-    params = {}
-    for i in range(1, len(layers)):
-        W = np.random.randn(layers[i], layers[i - 1]) * np.sqrt(2 / layers[i - 1]).astype(np.float32)  # He initialization
-        b = np.zeros((layers[i], 1), dtype=np.float32)
-        params[f'W{i}'] = W
-        params[f'b{i}'] = b
-        params[f'activation{i}'] = activation_funcs[i - 1]
+@dataclass
+class NetworkConfig:
+    """Configuration for neural network hyperparameters."""
+    layer_dims: List[int]
+    activation_funcs: List[str]
+    learning_rate: float = 0.001
+    beta1: float = 0.9
+    beta2: float = 0.999
+    epsilon: float = 1e-8
+    max_iterations: int = 1000
+    batch_size: int = 32
+    early_stopping_patience: int = 50
+    min_delta: float = 1e-4
+
+class ActivationFunctions:
+    """Collection of activation functions and their derivatives."""
     
-    # Initialize Adam parameters
-    params['v_dW'] = {f'dW{i}': np.zeros_like(params[f'W{i}'], dtype=np.float32) for i in range(1, len(layers))}
-    params['v_db'] = {f'db{i}': np.zeros_like(params[f'b{i}'], dtype=np.float32) for i in range(1, len(layers))}
-    params['s_dW'] = {f'dW{i}': np.zeros_like(params[f'W{i}'], dtype=np.float32) for i in range(1, len(layers))}
-    params['s_db'] = {f'db{i}': np.zeros_like(params[f'b{i}'], dtype=np.float32) for i in range(1, len(layers))}
+    @staticmethod
+    def relu(Z: np.ndarray) -> np.ndarray:
+        return np.maximum(Z, 0)
     
-    return params
-
-# Activation functions and their derivatives
-def ReLU(Z: np.ndarray) -> np.ndarray:
-    return np.maximum(Z, 0)
-
-def ReLU_deriv(Z: np.ndarray) -> np.ndarray:
-    return Z > 0
-
-def identity(Z: np.ndarray) -> np.ndarray:
-    return Z
-
-activation_functions = {
-    'ReLu': (ReLU, ReLU_deriv),
-    'identity': (identity, None)
-}
-
-# Forward propagation
-def forward_prop(params: Dict[str, np.ndarray], X: np.ndarray) -> Tuple[List[np.ndarray], List[np.ndarray]]:
-    A = X
-    Z_vals, A_vals = [], [A]
+    @staticmethod
+    def relu_deriv(Z: np.ndarray) -> np.ndarray:
+        return Z > 0
     
-    for i in range(1, len(params) // 2 + 1):
-        W, b = params[f'W{i}'], params[f'b{i}']
-        Z = W.dot(A) + b
-        Z_vals.append(Z)
-
-        activation_func = params[f'activation{i}']
-        A = activation_functions[activation_func][0](Z)
-        A_vals.append(A)
-
-    return Z_vals, A_vals
-
-# Loss function: Mean Absolute Error
-def compute_loss(A_last: np.ndarray, Y: np.ndarray, loss_type: str = 'MAE') -> float:
-    if loss_type == 'MAE':
-        return np.mean(np.abs(A_last - Y))
-    elif loss_type == 'MSE':
-        return np.mean((A_last - Y) ** 2)
-
-# Backward propagation for MAE
-def backward_prop(Z_vals: List[np.ndarray], A_vals: List[np.ndarray], params: Dict[str, np.ndarray], X: np.ndarray, Y: np.ndarray) -> Tuple[Dict[int, np.ndarray], Dict[int, np.ndarray]]:
-    m = Y.size
-    dW, db = {}, {}
+    @staticmethod
+    def identity(Z: np.ndarray) -> np.ndarray:
+        return Z
     
-    # Compute dZ for the output layer
-    dZ = np.sign(A_vals[-1] - Y)  # Gradient for MAE
-    
-    for layer in reversed(range(1, len(params) // 2 + 1)):
-        W, Z, A_prev = params[f'W{layer}'], Z_vals[layer - 1], A_vals[layer - 1]
-        dW[layer] = (1 / m) * dZ.dot(A_prev.T)
-        db[layer] = (1 / m) * np.sum(dZ, axis=1, keepdims=True)
+    @staticmethod
+    def identity_deriv(Z: np.ndarray) -> np.ndarray:
+        return np.ones_like(Z)
 
-        if layer > 1:
-            dZ = W.T.dot(dZ) * activation_functions[params[f'activation{layer - 1}']][1](Z)
-
-    return dW, db
-
-# Adam optimizer update function
-def update_params(params: Dict[str, np.ndarray], dW: Dict[int, np.ndarray], db: Dict[int, np.ndarray], alpha: float, beta1: float, beta2: float, epsilon: float, t: int) -> Dict[str, np.ndarray]:
-    for layer in range(1, len(params) // 2 + 1):
-        # Update biased first moment estimate
-        params['v_dW'][f'dW{layer}'] = beta1 * params['v_dW'][f'dW{layer}'] + (1 - beta1) * dW[layer]
-        params['v_db'][f'db{layer}'] = beta1 * params['v_db'][f'db{layer}'] + (1 - beta1) * db[layer]
-
-        # Update biased second raw moment estimate
-        params['s_dW'][f'dW{layer}'] = beta2 * params['s_dW'][f'dW{layer}'] + (1 - beta2) * (dW[layer] ** 2)
-        params['s_db'][f'db{layer}'] = beta2 * params['s_db'][f'db{layer}'] + (1 - beta2) * (db[layer] ** 2)
-
-        # Compute bias-corrected first and second moment estimates
-        v_dW_corr = params['v_dW'][f'dW{layer}'] / (1 - beta1 ** t)
-        v_db_corr = params['v_db'][f'db{layer}'] / (1 - beta1 ** t)
-        s_dW_corr = params['s_dW'][f'dW{layer}'] / (1 - beta2 ** t)
-        s_db_corr = params['s_db'][f'db{layer}'] / (1 - beta2 ** t)
-
-        # Update parameters
-        params[f'W{layer}'] -= (alpha * v_dW_corr / (np.sqrt(s_dW_corr) + epsilon))
-        params[f'b{layer}'] -= (alpha * v_db_corr / (np.sqrt(s_db_corr) + epsilon))
-
-    return params
-
-# Training loop using Adam optimizer
-def gradient_descent(X: np.ndarray, Y: np.ndarray, activation_funcs: List[str], layer_dims: List[int], alpha: float, iterations: int, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8) -> Tuple[Dict[str, np.ndarray], List[float], List[float]]:
-    params = init_params(layer_dims, activation_funcs)
-    losses, mses = [], []
-
-    for i in range(1, iterations + 1):
-        Z_vals, A_vals = forward_prop(params, X)
+class NeuralNetwork:
+    def __init__(self, config: NetworkConfig):
+        self.config = config
+        self.params: Dict = {}
+        self.history: Dict[str, List[float]] = {'train_loss': [], 'val_loss': [], 'train_mse': [], 'val_mse': []}
+        self._initialize_parameters()
         
-        loss = compute_loss(A_vals[-1], Y, 'MAE')
-        mse = compute_loss(A_vals[-1], Y, 'MSE')
-        losses.append(loss)
-        mses.append(mse)
+    def _initialize_parameters(self) -> None:
+        """Initialize network parameters using He initialization."""
+        for i in range(1, len(self.config.layer_dims)):
+            # He initialization with proper scaling
+            scale = np.sqrt(2.0 / self.config.layer_dims[i - 1])
+            self.params[f'W{i}'] = np.random.randn(self.config.layer_dims[i], 
+                                                  self.config.layer_dims[i - 1]).astype(np.float32) * scale
+            self.params[f'b{i}'] = np.zeros((self.config.layer_dims[i], 1), dtype=np.float32)
+            self.params[f'activation{i}'] = self.config.activation_funcs[i - 1]
+        
+        # Initialize Adam optimizer parameters
+        for i in range(1, len(self.config.layer_dims)):
+            for param in ['v_dW', 'v_db', 's_dW', 's_db']:
+                if param not in self.params:
+                    self.params[param] = {}
+                self.params[param][f'd{"W" if "W" in param else "b"}{i}'] = \
+                    np.zeros_like(self.params[f'{"W" if "W" in param else "b"}{i}'], dtype=np.float32)
 
-        dW, db = backward_prop(Z_vals, A_vals, params, X, Y)
-        params = update_params(params, dW, db, alpha, beta1, beta2, epsilon, i)
+    def forward_propagation(self, X: np.ndarray) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        """Perform forward propagation through the network."""
+        A = X
+        Z_vals = []
+        A_vals = [A]
+        
+        for i in range(1, len(self.config.layer_dims)):
+            Z = self.params[f'W{i}'].dot(A) + self.params[f'b{i}']
+            Z_vals.append(Z)
+            
+            A = (ActivationFunctions.relu(Z) if self.params[f'activation{i}'] == 'ReLu' 
+                 else ActivationFunctions.identity(Z))
+            A_vals.append(A)
+            
+        return Z_vals, A_vals
 
-        if i % 10 == 0:
-            print(f"Iteration {i}: Loss = {loss:.4f}, MSE = {mse:.4f}")
+    def backward_propagation(self, Z_vals: List[np.ndarray], A_vals: List[np.ndarray], 
+                           X: np.ndarray, Y: np.ndarray) -> Tuple[Dict[int, np.ndarray], Dict[int, np.ndarray]]:
+        """Perform backward propagation to compute gradients."""
+        m = Y.shape[1]
+        dW = {}
+        db = {}
+        
+        # Output layer gradient
+        dZ = np.sign(A_vals[-1] - Y)  # MAE gradient
+        
+        for layer in reversed(range(1, len(self.config.layer_dims))):
+            dW[layer] = (1 / m) * dZ.dot(A_vals[layer - 1].T)
+            db[layer] = (1 / m) * np.sum(dZ, axis=1, keepdims=True)
+            
+            if layer > 1:
+                activation_deriv = (ActivationFunctions.relu_deriv if self.params[f'activation{layer-1}'] == 'ReLu' 
+                                  else ActivationFunctions.identity_deriv)
+                dZ = self.params[f'W{layer}'].T.dot(dZ) * activation_deriv(Z_vals[layer - 2])
+                
+        return dW, db
 
-    return params, losses, mses
+    def update_parameters(self, dW: Dict[int, np.ndarray], db: Dict[int, np.ndarray], t: int) -> None:
+        """Update parameters using Adam optimizer."""
+        lr = self._get_learning_rate(t)
+        
+        for layer in range(1, len(self.config.layer_dims)):
+            # Update momentum and RMSprop terms
+            for param_name, grad, param_type in [('W', dW[layer], 'dW'), ('b', db[layer], 'db')]:
+                # Momentum
+                self.params[f'v_{param_type}'][f'{param_type}{layer}'] = \
+                    (self.config.beta1 * self.params[f'v_{param_type}'][f'{param_type}{layer}'] + 
+                     (1 - self.config.beta1) * grad).astype(np.float32)
+                
+                # RMSprop
+                self.params[f's_{param_type}'][f'{param_type}{layer}'] = \
+                    (self.config.beta2 * self.params[f's_{param_type}'][f'{param_type}{layer}'] + 
+                     (1 - self.config.beta2) * (grad ** 2)).astype(np.float32)
+                
+                # Bias correction
+                v_corrected = self.params[f'v_{param_type}'][f'{param_type}{layer}'] / (1 - self.config.beta1 ** t)
+                s_corrected = self.params[f's_{param_type}'][f'{param_type}{layer}'] / (1 - self.config.beta2 ** t)
+                
+                # Update parameters
+                self.params[f'{param_name}{layer}'] -= \
+                    (lr * v_corrected / (np.sqrt(s_corrected) + self.config.epsilon)).astype(np.float32)
 
-# Predictions and evaluation
-def make_predictions(X: np.ndarray, params: Dict[str, np.ndarray]) -> np.ndarray:
-    _, A_vals = forward_prop(params, X)
-    return A_vals[-1]
+    def _get_learning_rate(self, t: int) -> float:
+        """Implement learning rate scheduling."""
+        return self.config.learning_rate * (1.0 / (1.0 + 0.01 * t))
 
-def evaluate_model(Y_pred: np.ndarray, Y_true: np.ndarray) -> float:
-    return np.mean(np.abs(Y_pred - Y_true))
+    def train(self, X_train: np.ndarray, Y_train: np.ndarray, 
+             X_val: np.ndarray, Y_val: np.ndarray) -> None:
+        """Train the neural network with early stopping."""
+        best_val_loss = float('inf')
+        patience_counter = 0
+        
+        for i in range(1, self.config.max_iterations + 1):
+            # Forward and backward passes
+            Z_vals, A_vals = self.forward_propagation(X_train)
+            dW, db = self.backward_propagation(Z_vals, A_vals, X_train, Y_train)
+            
+            # Update parameters
+            self.update_parameters(dW, db, i)
+            
+            # Calculate metrics
+            train_loss = self._compute_loss(A_vals[-1], Y_train)
+            train_mse = self._compute_mse(A_vals[-1], Y_train)
+            
+            # Validation metrics
+            _, val_A_vals = self.forward_propagation(X_val)
+            val_loss = self._compute_loss(val_A_vals[-1], Y_val)
+            val_mse = self._compute_mse(val_A_vals[-1], Y_val)
+            
+            # Update history
+            self.history['train_loss'].append(train_loss)
+            self.history['val_loss'].append(val_loss)
+            self.history['train_mse'].append(train_mse)
+            self.history['val_mse'].append(val_mse)
+            
+            # Early stopping check
+            if val_loss < best_val_loss - self.config.min_delta:
+                best_val_loss = val_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            if patience_counter >= self.config.early_stopping_patience:
+                print(f"Early stopping triggered at iteration {i}")
+                break
+            
+            if i % 10 == 0:
+                print(f"Iteration {i}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
 
-# Load and preprocess dataset
-column_names = ['MPG', 'Cylinders', 'Displacement', 'Horsepower', 'Weight',
-                'Acceleration', 'Model Year', 'Origin']
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Make predictions using the trained network."""
+        _, A_vals = self.forward_propagation(X)
+        return A_vals[-1]
 
-raw_dataset = pd.read_csv("dataset/auto-mpg.data", names=column_names,
-                          na_values='?', comment='\t',
-                          sep=' ', skipinitialspace=True)
+    @staticmethod
+    def _compute_loss(predictions: np.ndarray, targets: np.ndarray) -> float:
+        """Compute MAE loss."""
+        return float(np.mean(np.abs(predictions - targets)))
 
-# Clean dataset
-dataset = raw_dataset.dropna()
-dataset['Origin'] = dataset['Origin'].map({1: 'USA', 2: 'Europe', 3: 'Japan'})
+    @staticmethod
+    def _compute_mse(predictions: np.ndarray, targets: np.ndarray) -> float:
+        """Compute MSE loss."""
+        return float(np.mean((predictions - targets) ** 2))
 
-# Ensure all numeric columns are of float type for calculations
-numeric_cols = dataset.select_dtypes(include=['float64', 'int64']).columns
-dataset[numeric_cols] = dataset[numeric_cols].astype(float)
+    def plot_training_history(self) -> None:
+        """Plot training metrics."""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+        
+        # Loss plot
+        ax1.plot(self.history['train_loss'], label='Train Loss', color='blue')
+        ax1.plot(self.history['val_loss'], label='Validation Loss', color='red')
+        ax1.set_title('Loss Over Iterations')
+        ax1.set_xlabel('Iterations')
+        ax1.set_ylabel('Loss (MAE)')
+        ax1.grid(True)
+        ax1.legend()
+        
+        # MSE plot
+        ax2.plot(self.history['train_mse'], label='Train MSE', color='blue')
+        ax2.plot(self.history['val_mse'], label='Validation MSE', color='red')
+        ax2.set_title('Mean Squared Error Over Iterations')
+        ax2.set_xlabel('Iterations')
+        ax2.set_ylabel('MSE')
+        ax2.grid(True)
+        ax2.legend()
+        
+        plt.tight_layout()
+        plt.show()
 
-# Prepare features and target
-X = dataset.drop('MPG', axis=1).values.T
-Y = dataset['MPG'].values.reshape(1, -1)
+def load_and_preprocess_data(filepath: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load and preprocess the auto-mpg dataset."""
+    column_names = ['MPG', 'Cylinders', 'Displacement', 'Horsepower', 'Weight',
+                   'Acceleration', 'Model Year', 'Origin']
+    
+    # Load data
+    dataset = pd.read_csv(filepath, names=column_names, na_values='?', 
+                         comment='\t', sep=' ', skipinitialspace=True)
+    
+    # Clean and preprocess
+    dataset = dataset.dropna()
+    dataset['Origin'] = dataset['Origin'].map({1: 'USA', 2: 'Europe', 3: 'Japan'})
+    dataset = pd.get_dummies(dataset, columns=['Origin'], prefix='', prefix_sep='')
+    
+    # Split data
+    data = dataset.values
+    train_size = int(0.8 * len(data))
+    
+    # Prepare training and validation sets
+    train_data = data[train_size:].T
+    val_data = data[:train_size].T
+    
+    Y_train = train_data[0:1]
+    X_train = train_data[1:]
+    Y_val = val_data[0:1]
+    X_val = val_data[1:]
+    
+    # Ensure arrays are float64
+    X_train = X_train.astype(np.float64)
+    X_val = X_val.astype(np.float64)
+    Y_train = Y_train.astype(np.float64)
+    Y_val = Y_val.astype(np.float64)
+    
+    # Normalize features with handling for zero standard deviation
+    means = np.mean(X_train, axis=1, keepdims=True)
+    stds = np.std(X_train, axis=1, keepdims=True)
+    # Replace zero standard deviations with 1 to avoid division by zero
+    stds[stds == 0] = 1.0
+    
+    X_train = (X_train - means) / stds
+    X_val = (X_val - means) / stds
+    
+    return X_train, Y_train, X_val, Y_val
 
-# Normalize data
-X = (X - X.mean(axis=1, keepdims=True)) / X.std(axis=1, keepdims=True)
+def main():
+    # Load and preprocess data
+    X_train, Y_train, X_val, Y_val = load_and_preprocess_data("dataset/auto-mpg.data")
+    
+    # Configure network
+    config = NetworkConfig(
+        layer_dims=[X_train.shape[0], 128, 128, 1],
+        activation_funcs=['ReLu', 'ReLu', 'identity'],
+        learning_rate=0.001,
+        max_iterations=1000,
+        early_stopping_patience=50
+    )
+    
+    # Create and train network
+    model = NeuralNetwork(config)
+    model.train(X_train, Y_train, X_val, Y_val)
+    
+    # Evaluate model
+    train_predictions = model.predict(X_train)
+    train_mae = model._compute_loss(train_predictions, Y_train)
+    print(f"Final Train MAE: {train_mae:.4f}")
+    
+    val_predictions = model.predict(X_val)
+    val_mae = model._compute_loss(val_predictions, Y_val)
+    print(f"Final Validation MAE: {val_mae:.4f}")
+    
+    # Plot training history
+    model.plot_training_history()
 
-# Neural network parameters
-layers = [X.shape[0], 10, 5, 1]  # Input layer, hidden layers, output layer
-activation_funcs = ['ReLu', 'ReLu', 'identity']
-alpha = 0.001  # Learning rate
-iterations = 500
-
-# Train neural network
-params, losses, mses = gradient_descent(X, Y, activation_funcs, layers, alpha, iterations)
-
-# Make predictions and evaluate
-Y_pred = make_predictions(X, params)
-mae = evaluate_model(Y_pred.flatten(), Y.flatten())
-print(f"Mean Absolute Error: {mae:.4f}")
-
-# Plotting loss and MSE over iterations
-plt.figure(figsize=(12, 5))
-plt.subplot(1, 2, 1)
-plt.plot(losses)
-plt.title('Loss over Iterations')
-plt.xlabel('Iterations')
-plt.ylabel('Loss (MAE)')
-
-plt.subplot(1, 2, 2)
-plt.plot(mses)
-plt.title('Mean Squared Error over Iterations')
-plt.xlabel('Iterations')
-plt.ylabel('MSE')
-
-plt.tight_layout()
-plt.show()
+if __name__ == "__main__":
+    main()
