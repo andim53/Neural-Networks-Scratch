@@ -10,6 +10,8 @@ Features:
 - Type hints and documentation
 - Configuration management
 - Improved visualization
+
+Over vitting
 """
 
 import numpy as np

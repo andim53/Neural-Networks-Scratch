@@ -4,6 +4,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+"""
+Created on Tue Oct 29 12:26:54 2024
+
+@author: andisyamsul
+
+Dynamics model - Need cleaning
+
+"""
 
 # Def params
 def init_params(layers, activation_func):

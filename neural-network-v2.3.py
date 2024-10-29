@@ -4,6 +4,8 @@
 Created on Tue Oct 29 16:33:50 2024
 
 @author: andisyamsul
+
+Need cleaning
 """
 
 import numpy as np
