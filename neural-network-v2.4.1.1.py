@@ -412,7 +412,7 @@ def main():
     print("\nTraining final model...")
     model = NeuralNetwork(config)
     model.train(X_train, Y_train, X_val, Y_val)
-    
+
     # Evaluate model
     train_predictions = model.predict(X_train)
     train_mae = np.mean(np.abs(train_predictions - Y_train))
