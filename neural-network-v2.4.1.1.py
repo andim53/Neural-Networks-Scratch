@@ -247,6 +247,7 @@ class NeuralNetwork:
             epoch_train_loss = 0
             for b in range(num_batches):
                 batch_indices = indices[b*self.config.batch_size:(b+1)*self.config.batch_size]
+                print(batch_indices)
                 X_batch = X_train[:, batch_indices]
                 Y_batch = Y_train[:, batch_indices]
                 
